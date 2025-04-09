@@ -1,6 +1,7 @@
 import re
 import os
 import nltk
+import requests
 from nltk.corpus import wordnet as wn
 from nltk.tokenize import sent_tokenize, word_tokenize
 from nltk import pos_tag
@@ -25,7 +26,6 @@ NLTK_RESOURCES = {
 def verify_wordnet():
     """Special verification for WordNet as it has multiple files"""
     try:
-        # Check for critical WordNet files
         required_files = [
             'corpora/wordnet/lexnames',
             'corpora/wordnet/index.sense',
@@ -40,12 +40,10 @@ def verify_wordnet():
 def setup_nltk():
     """Configure NLTK data path and verify resources"""
     try:
-        # Set the primary NLTK data path
         os.makedirs(NLTK_DATA_DIR, exist_ok=True)
         if NLTK_DATA_DIR not in nltk.data.path:
             nltk.data.path.insert(0, NLTK_DATA_DIR)
         
-        # Check for existing resources
         missing = []
         for resource, path in NLTK_RESOURCES.items():
             try:
@@ -57,19 +55,15 @@ def setup_nltk():
             except LookupError:
                 missing.append(resource)
         
-        # Download only missing resources
         if missing:
             with st.spinner(f"Downloading NLTK resources: {', '.join(missing)}..."):
                 for resource in missing:
                     nltk.download(resource, download_dir=NLTK_DATA_DIR)
-                    
-                    # Special handling for WordNet
                     if resource == 'wordnet' and not verify_wordnet():
                         st.warning("WordNet download incomplete, retrying...")
                         nltk.download('wordnet', download_dir=NLTK_DATA_DIR)
                     
         return True
-        
     except Exception as e:
         st.error(f"NLTK setup failed: {e}")
         return False
@@ -97,6 +91,25 @@ except Exception as e:
     st.error("Please install it first: `python -m spacy download en_core_web_sm`")
     st.stop()
 
+# Ollama integration for transformer-based analysis
+def ollama_analyze_requirement(req, model='mistral'):
+    try:
+        prompt = f"""Analyze the following software requirement for clarity, ambiguity, vagueness, and passive voice:
+
+        "{req}"
+
+        Provide a brief assessment of quality issues and suggestions for improvement.
+        """
+        response = requests.post(
+            "http://localhost:11434/api/generate",
+            json={"model": model, "prompt": prompt, "stream": False},
+            timeout=15
+        )
+        response.raise_for_status()
+        return response.json()['response'].strip()
+    except Exception as e:
+        return f"Ollama error: {e}"
+
 class RequirementAnalyzer:
     def __init__(self, requirements):
         self.requirements = requirements
@@ -106,7 +119,6 @@ class RequirementAnalyzer:
         detected_terms = []
         
         try:
-            # Verify WordNet is fully functional
             if not wn.get_version():
                 raise LookupError("WordNet not properly initialized")
                 
@@ -167,7 +179,7 @@ class RequirementAnalyzer:
                     'Vague Phrases': 'Yes' if self.detect_vague_phrases(requirement) else 'No',
                     'Inconsistencies': 'Yes' if self.detect_inconsistencies(requirement) else 'No',
                     'Passive Voice': 'Yes' if self.detect_passive_voice(requirement) else 'No',
-                    'Transformer Analysis': 'N/A'  # Removed transformer analysis
+                    'Transformer Analysis': ollama_analyze_requirement(requirement)
                 })
             except Exception as e:
                 st.error(f"Failed to analyze requirement {idx+1}: {e}")
@@ -184,16 +196,21 @@ class RequirementAnalyzer:
         return pd.DataFrame(analysis_results)
 
 def main():
-    st.title("Enhanced Requirement Analyzer")
+    st.title("💬 AI Requirement Analyzer")
     
     with st.expander("ℹ️ How to use"):
         st.markdown("""
-        1. Upload a text file with requirements (one per line)
-        2. The analyzer will check for quality issues
-        3. Download results as CSV
+        1. Upload a `.txt` file with one requirement per line.
+        2. The analyzer will check for:
+           - Ambiguity
+           - Vague phrases
+           - Logical inconsistencies
+           - Passive voice
+           - **AI-powered insights using Ollama**
+        3. Download the full analysis as CSV.
         """)
     
-    uploaded_file = st.file_uploader("Choose a requirements file", type="txt")
+    uploaded_file = st.file_uploader("📄 Upload Requirements File", type="txt")
     
     if uploaded_file:
         try:
@@ -204,18 +221,18 @@ def main():
             ]
             
             if not requirements:
-                st.warning("No valid requirements found in the file")
+                st.warning("⚠️ No valid requirements found in the file.")
                 return
                 
-            with st.spinner("Analyzing requirements..."):
+            with st.spinner("🔍 Analyzing requirements..."):
                 analyzer = RequirementAnalyzer(requirements)
                 results = analyzer.analyze()
                 
-                st.subheader("Analysis Results")
+                st.subheader("✅ Analysis Results")
                 st.dataframe(results)
                 
                 st.download_button(
-                    "Download Results",
+                    "⬇️ Download CSV",
                     data=results.to_csv(index=False).encode('utf-8'),
                     file_name="requirement_analysis.csv",
                     mime="text/csv"
