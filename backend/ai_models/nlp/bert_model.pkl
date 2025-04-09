@@ -1,0 +1,129 @@
+import pickle
+from transformers import BertForSequenceClassification, BertTokenizer
+import torch
+import nltk
+from nltk.tokenize import word_tokenize
+from textblob import TextBlob
+import pandas as pd
+
+# Download necessary NLTK resources
+nltk.download('punkt')
+
+class RequirementAnalyzer:
+    def __init__(self, requirements):
+        """
+        Initialize the RequirementAnalyzer with the given requirements.
+        :param requirements: List of strings, where each string is a system requirement.
+        """
+        self.requirements = requirements
+        # Load the pre-trained BERT model and tokenizer from the .pkl file
+        with open("bert_model.pkl", "rb") as f:
+            self.model, self.tokenizer = pickle.load(f)
+
+    @staticmethod
+    def detect_ambiguity(requirement):
+        """
+        Detect ambiguous terms in the requirement using WordNet and predefined ambiguous terms.
+        :param requirement: A single system requirement string.
+        :return: List of ambiguous terms found in the requirement.
+        """
+        ambiguous_terms = ['may', 'should', 'can', 'could', 'might', 'possibly', 'typically']
+        detected_terms = []
+
+        words = word_tokenize(requirement)
+        for word in words:
+            if word.lower() in ambiguous_terms:
+                detected_terms.append(word)
+
+        return detected_terms
+
+    @staticmethod
+    def detect_inconsistencies(requirement):
+        """
+        Detect inconsistencies in the requirement by analyzing contradictions.
+        :param requirement: A single system requirement string.
+        :return: Boolean indicating whether an inconsistency is detected.
+        """
+        contradictory_pairs = [('must', 'should'), ('always', 'sometimes'), ('mandatory', 'optional')]
+        tokens = word_tokenize(requirement.lower())
+        for pair in contradictory_pairs:
+            if pair[0] in tokens and pair[1] in tokens:
+                return True
+        return False
+
+    @staticmethod
+    def detect_passive_voice(requirement):
+        """
+        Detect if the requirement is written in passive voice.
+        :param requirement: A single system requirement string.
+        :return: Boolean indicating whether passive voice is detected.
+        """
+        blob = TextBlob(requirement)
+        for sentence in blob.sentences:
+            words = nltk.pos_tag(word_tokenize(str(sentence)))
+            for i in range(1, len(words)):
+                if words[i - 1][1] in ['VBN'] and words[i][1] in ['IN', 'TO', 'BY']:
+                    return True
+        return False
+
+    def analyze_with_bert(self, requirement):
+        """
+        Analyze a requirement using the pre-trained BERT model for ambiguity or inconsistency detection.
+        :param requirement: Single requirement to analyze.
+        :return: Model's prediction result (e.g., ambiguity: 0 or 1).
+        """
+        inputs = self.tokenizer(requirement, return_tensors="pt", truncation=True, padding=True)
+        outputs = self.model(**inputs)
+
+        # Assuming the model outputs a classification label (e.g., ambiguity: 0 or 1)
+        prediction = torch.argmax(outputs.logits, dim=-1).item()
+
+        return prediction
+
+    def analyze(self):
+        """
+        Analyze all requirements for ambiguities, inconsistencies, and passive voice usage.
+        :return: DataFrame with analysis results for each requirement.
+        """
+        analysis_results = []
+
+        for idx, requirement in enumerate(self.requirements):
+            # Use BERT model for prediction
+            bert_prediction = self.analyze_with_bert(requirement)
+            # Use NLTK-based methods for ambiguity, inconsistency, and passive voice detection
+            ambiguous_terms = self.detect_ambiguity(requirement)
+            inconsistent = self.detect_inconsistencies(requirement)
+            passive_voice = self.detect_passive_voice(requirement)
+
+            analysis_results.append({
+                'Requirement ID': idx + 1,
+                'Requirement': requirement,
+                'Ambiguous Terms': ', '.join(ambiguous_terms),
+                'Inconsistencies': inconsistent,
+                'Passive Voice': passive_voice,
+                'BERT Prediction': bert_prediction
+            })
+
+        # Return the analysis results as a pandas DataFrame
+        return pd.DataFrame(analysis_results)
+
+
+# Example Usage
+if __name__ == "__main__":
+    # Example requirements list
+    requirements_list = [
+        "The system should handle up to 1000 requests per second.",
+        "Users must log in before accessing the system, but they can sometimes skip this step.",
+        "The database might support multiple types of queries.",
+        "All data backups are to be performed daily."
+    ]
+
+    # Initialize the analyzer and analyze requirements
+    analyzer = RequirementAnalyzer(requirements_list)
+    results = analyzer.analyze()
+
+    # Save results to a CSV file
+    results.to_csv("requirement_analysis_results.csv", index=False)
+
+    # Display results
+    print(results)
